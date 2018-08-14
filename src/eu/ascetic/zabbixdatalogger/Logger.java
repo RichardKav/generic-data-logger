@@ -1,5 +1,5 @@
 /**
- * Copyright 2014 University of Leeds
+ * Copyright 2018 University of Leeds
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -17,8 +17,11 @@ package eu.ascetic.zabbixdatalogger;
 
 import eu.ascetic.zabbixdatalogger.datasource.CollectDInfluxDbDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.CollectdDataSourceAdaptor;
+import eu.ascetic.zabbixdatalogger.datasource.CompssDatasourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.DataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.SlurmDataSourceAdaptor;
+import eu.ascetic.zabbixdatalogger.datasource.TangoEnvironmentDataSourceAdaptor;
+import eu.ascetic.zabbixdatalogger.datasource.TangoRemoteProcessingDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.ZabbixDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.ZabbixDirectDbDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
@@ -61,10 +64,14 @@ public class Logger {
         DataSourceAdaptor adaptor;
         if ((strArgs.contains("json") || strArgs.contains("j"))) {
             adaptor = new ZabbixDataSourceAdaptor();
+        } else if ((strArgs.contains("zabbix") || strArgs.contains("z"))) {
+            adaptor = new ZabbixDirectDbDataSourceAdaptor();            
         } else if (strArgs.contains("influx")  || strArgs.contains("i")) {
             adaptor = new CollectDInfluxDbDataSourceAdaptor();
+        } else if ((strArgs.contains("compss") || strArgs.contains("c"))) {
+            adaptor = new CompssDatasourceAdaptor();              
         } else if ((strArgs.contains("collectd") || strArgs.contains("d"))) {
-            adaptor = new CollectdDataSourceAdaptor();
+            adaptor = new CollectdDataSourceAdaptor();          
             try {
                 Thread.sleep(20000);
             } catch (InterruptedException ex) {
@@ -80,7 +87,21 @@ public class Logger {
             } catch (InterruptedException ex) {
                 java.util.logging.Logger.getLogger(Logger.class.getName()).log(Level.SEVERE, null, ex);
             }
-        } else {
+        } else if ((strArgs.contains("tango") || strArgs.contains("t"))) {
+            adaptor = new TangoEnvironmentDataSourceAdaptor();
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException ex) {
+                java.util.logging.Logger.getLogger(Logger.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        } else if ((strArgs.contains("remote") || strArgs.contains("r"))) {
+            adaptor = new TangoRemoteProcessingDataSourceAdaptor();
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException ex) {
+                java.util.logging.Logger.getLogger(Logger.class.getName()).log(Level.SEVERE, null, ex);
+            }               
+        } else { //Zabbix is the default
             adaptor = new ZabbixDirectDbDataSourceAdaptor();
         }
         Host host = adaptor.getHostByName(hostname);

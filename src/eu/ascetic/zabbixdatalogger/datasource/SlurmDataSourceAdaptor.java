@@ -1,5 +1,5 @@
 /**
- * Copyright 2014 University of Leeds
+ * Copyright 2016 University of Leeds
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -17,6 +17,8 @@ package eu.ascetic.zabbixdatalogger.datasource;
 
 import eu.ascetic.ioutils.Settings;
 import eu.ascetic.zabbixdatalogger.datasource.types.Accelerator;
+import eu.ascetic.zabbixdatalogger.datasource.types.ApplicationOnHost;
+import eu.ascetic.zabbixdatalogger.datasource.types.ApplicationOnHost.JOB_STATUS;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
 import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
@@ -26,21 +28,24 @@ import java.util.ArrayList;
 import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.LinkedList;
+import org.apache.commons.collections4.queue.CircularFifoQueue;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Scanner;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.apache.commons.io.input.Tailer;
 import org.apache.commons.io.input.TailerListenerAdapter;
+import static eu.ascetic.zabbixdatalogger.datasource.KpiList.APPS_ALLOCATED_TO_HOST_COUNT;
+import static eu.ascetic.zabbixdatalogger.datasource.KpiList.APPS_RUNNING_ON_HOST_COUNT;
+import static eu.ascetic.zabbixdatalogger.datasource.KpiList.APPS_STATUS;
 
 /**
  * This requests information for SLURM via the command "scontrol show node="
  *
  * @author Richard Kavanagh
  */
-public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
+public class SlurmDataSourceAdaptor implements DataSourceAdaptor, ApplicationDataSource {
 
     private Tailer tailer;
     private final HashMap<String, Host> hosts = new HashMap<>();
@@ -50,7 +55,7 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
     private SlurmDataSourceAdaptor.SlurmTailer fileTailer;
     private SlurmPoller poller;
     private final Settings settings = new Settings("energy-modeller-slurm-config.properties");
-    private final LinkedList<SlurmDataSourceAdaptor.CPUUtilisation> cpuMeasure = new LinkedList<>();
+    private final HashMap<String, CircularFifoQueue<SlurmDataSourceAdaptor.CPUUtilisation>> cpuMeasure = new HashMap<>();
 
     public SlurmDataSourceAdaptor() {
         startup(1);
@@ -84,6 +89,58 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
         if (settings.isChanged()) {
             settings.save("energy-modeller-slurm-config.properties");
         }        
+    }
+
+    /**
+     * This obtains the current cluster level power cap from SLURM. In the event 
+     * the value isn't read correctly the value Double.NaN is provided instead.
+     *
+     * @return The current power cap value
+     */
+    public static double getCurrentPowerCap() {
+        ArrayList<String> powerStr = execCmd("scontrol show power");
+        if (powerStr.isEmpty()) {
+            return Double.NaN;
+        }
+        try {
+            String[] values = powerStr.get(0).split(" ");
+            for (String value : values) {
+                if (value.startsWith("PowerCap")) {
+                    return Double.parseDouble(value.split("=")[1]);
+                }
+            }
+        } catch (NumberFormatException ex) {
+
+        }
+        return Double.NaN;
+    }    
+
+    /**
+     * The host string from SLURM follows a format that must be parsed into a
+     * list of separate hosts. This method achieves this.
+     *
+     * @param hostList The list of hosts in a compressed format. examples
+     * include: "ns54" or "ns[54-56]" or "ns[54-56],ns[58-60]" or "ns54,ns56"
+     * @return The list of hosts in an array ready for processing.
+     */
+    private ArrayList<String> getHostList(String hostList) {
+        ArrayList<String> answer = new ArrayList<>();
+        String[] partialAnswer = hostList.split(",");
+        for (String part : partialAnswer) {
+            if (part.contains("[")) { //test if host is in range i.e. node[51-54]
+                String hostPrefix = part.substring(0, part.indexOf("["));
+                try (Scanner parser = new Scanner(part).useDelimiter("[^0-9]+")) {
+                    int start = parser.nextInt();
+                    int end = parser.nextInt();
+                    for (int i = start; i <= end; i++) {
+                        answer.add(hostPrefix + i);
+                    }
+                }
+            } else {
+                answer.add(part); //Host name is singular, e.g. ns54
+            }
+        }
+        return answer;
     }
 
     @Override
@@ -121,6 +178,148 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
     }
 
     @Override
+    public List<ApplicationOnHost> getHostApplicationList() {
+        return getHostApplicationList(null);
+    }
+
+    /**
+     * This filters a list of applications by their current status
+     *
+     * @param apps The list of applications to filter
+     * @param state The status to filter the job by
+     * @return The list of filtered applications
+     */
+    public List<ApplicationOnHost> getHostApplicationList(List<ApplicationOnHost> apps, JOB_STATUS state) {
+        List<ApplicationOnHost> answer = new ArrayList<>();
+        for (ApplicationOnHost app : apps) {
+            if (app.getStatus().equals(state)) {
+                answer.add(app);
+            }
+        }
+        return answer;
+    }
+
+    @Override
+    public List<ApplicationOnHost> getHostApplicationList(ApplicationOnHost.JOB_STATUS state) {
+        ArrayList<ApplicationOnHost> answer = new ArrayList<>();
+
+        /**
+         * squeue has various jobs states that are possible: see:
+         * https://slurm.schedmd.com/squeue.html
+         *
+         * namely: PENDING (PD), RUNNING (R), SUSPENDED (S), STOPPED (ST),
+         * COMPLETING (CG), COMPLETED (CD), CONFIGURING (CF), CANCELLED (CA),
+         * FAILED (F), TIMEOUT (TO), PREEMPTED (PR), BOOT_FAIL (BF) , NODE_FAIL
+         * (NF), REVOKED (RV), and SPECIAL_EXIT (SE)
+         */
+        String jobState;
+        if (state == null) {
+            jobState = "";
+        } else {
+            jobState = "-t " + state.name();
+        }
+
+        /*
+         * This queries what jobs are currently running, it outputs
+         * "JOBID, NAME, TIME, NODELIST (REASON)"
+         * "JOBID, JOB_NAME, USER, STATUS, TIME, MAX_TIME, NODELIST (REASON)"
+         * One line per job and space separated.
+         * 
+         * squeue -t RUNNING -l | awk 'NR> 1 {split($0,values,"[ \t\n]+"); 
+         * printf values[1] " " ; printf values[2] " "; printf values[4] " "; 
+         * printf values[5] " "; printf values[6] " "; printf values[7] " " ; 
+         * printf values[8] " "; print values[10]}'
+         * -l parameter swapped out with -o "%.30i %.30P %.50j %.30u %.30T %.30M %.30l %.30D %R"
+         * as per: https://slurm.schedmd.com/squeue.html. This changes the length 
+         * of things such as the job name and helps avoid truncation
+         *
+         * The output looks like:
+         * 
+         * 3009 RK-BENCH Kavanagr RUNNING 8:06 ns52
+         *        
+         */ 
+        String maincmd = "squeue " + jobState + " -o \"%.30i %.50j %.30u %.30T %.30M %.20l %R\""
+                + " | awk 'NR> 1 {split($0,values,\"[ \\t\\n]+\"); "
+                + "printf values[1] \" \"; "
+                + "printf values[2] \" \"; "
+                + "printf values[3] \" \"; "
+                + "printf values[4] \" \"; "
+                + "printf values[5] \" \"; "
+                + "printf values[6] \" \"; "
+                + "printf values[7] \" \"; "                
+                + "print values[8]}'";
+        ArrayList<String> output = execCmd(maincmd);
+        for (String line : output) { //Each line represents a different application
+            if (line != null && !line.isEmpty()) {
+                line = line.trim();
+                String[] items = line.split(" ");
+                try {
+                    int appId = Integer.parseInt(items[0]);
+                    String name = items[1];
+                    String status = items[3];
+                    long runningTime = parseDurationString(items[4]); //units seconds
+                    long maxRuntime = parseDurationString(items[5]); //units seconds
+                    long currentTime = System.currentTimeMillis(); //units milliseconds
+                    long startTime = currentTime - TimeUnit.SECONDS.toMillis(runningTime); //unit milliseconds
+                    GregorianCalendar start = new GregorianCalendar();
+                    GregorianCalendar deadline = null;
+                    start.setTimeInMillis(startTime);
+                    if (maxRuntime != 0) {
+                        deadline = new GregorianCalendar();
+                        deadline.setTimeInMillis(startTime + TimeUnit.SECONDS.toMillis(maxRuntime));
+                    }
+                    ArrayList<String> hostStrings = getHostList(items[6]);
+                    for (String hostStr : hostStrings) {
+                        Host host = getHostByName(hostStr);
+                        ApplicationOnHost app = new ApplicationOnHost(appId, name, host);
+                        app.setCreated(start);
+                        app.setDeadline(deadline);
+                        if (state != null) {
+                            app.setStatus(state);
+                        } else {
+                            app.setStatus(status);
+                        }
+                        answer.add(app);
+                    }
+                } catch (NumberFormatException ex) {
+                    Logger.getLogger(SlurmDataSourceAdaptor.class.getName()).log(Level.SEVERE,
+                            "Unexpected number format", ex);
+                }
+            }
+        }
+        return answer;
+    }
+
+    /**
+     * This takes a string in the format 0:03 i.e. mins:seconds and converts it
+     * into seconds
+     *
+     * @param duration The string to parse
+     * @return The time in seconds the duration string translates to.
+     */
+    public static long parseDurationString(String duration) {
+        long seconds = 0;
+        //If this is used to parse maximum runtime then the value may be UNLIMITED, thus this is guarded against
+        if (duration == null || duration.isEmpty() || !duration.matches("\\d+(:\\d+)*?") || duration.equals("UNLIMITED")) {
+            return 0;
+        }
+        String[] durationSplit = duration.split(":"); //0:03 i.e. mins:seconds or 1:0:0 i.e. 1 hour
+        switch (durationSplit.length) {
+            case 1:
+                seconds = seconds + Long.parseLong(durationSplit[0]);
+                break;
+            case 2:
+                seconds = seconds + TimeUnit.MINUTES.toSeconds(Long.parseLong(durationSplit[0]));
+                seconds = seconds + Long.parseLong(durationSplit[1]);
+                break;
+            case 3:
+                seconds = seconds + TimeUnit.HOURS.toSeconds(Long.parseLong(durationSplit[0]));
+                seconds = seconds + TimeUnit.MINUTES.toSeconds(Long.parseLong(durationSplit[1]));
+                seconds = seconds + Long.parseLong(durationSplit[2]);
+                break;
+        }
+        return seconds;
+    } 
     public HostMeasurement getHostData(Host host) {
         return current.get(host.getHostName());
     }
@@ -188,6 +387,84 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
             answer.add(vmData);
         }
         return answer;
+    }
+
+    /**
+     * This provides for the named application all the information that is
+     * available.
+     *
+     * @param application The host to get the measurement data for.
+     * @return The host measurement data
+     */
+    @Override
+    public ApplicationMeasurement getApplicationData(ApplicationOnHost application) {
+        if (application == null) {
+            return null;
+        }
+        HostMeasurement measure = current.get(application.getAllocatedTo().getHostName());
+        ApplicationMeasurement appData = new ApplicationMeasurement(
+                application,
+                measure.getClock());
+        appData.setMetrics(measure.getMetrics());
+        appendApplicationData(appData, measure);
+        return appData;
+    }
+
+    /**
+     * This lists for all applications all the metric data on them.
+     *
+     * @return A list of application measurements
+     */
+    @Override
+    public List<ApplicationMeasurement> getApplicationData() {
+        return getApplicationData(getHostApplicationList());
+    }
+
+    /**
+     * This takes a list of applications and provides all the metric data on
+     * them.
+     *
+     * @param appList The list of applications to get the data from
+     * @return A list of application measurements
+     */
+    @Override
+    public List<ApplicationMeasurement> getApplicationData(List<ApplicationOnHost> appList) {
+        if (appList == null) {
+            appList = getHostApplicationList();
+        }
+        ArrayList<ApplicationMeasurement> answer = new ArrayList<>();
+        for (ApplicationOnHost app : appList) {
+            ApplicationMeasurement measurement = getApplicationData(app);
+            if (measurement != null) {
+                answer.add(measurement);
+            }
+        }
+        return answer;
+    }
+
+    /**
+     * This takes an application measurement and adds onto it the metrics for
+     * the applications status, along with a count of applications both running
+     * and allocated to the host
+     *
+     * @param appData The application specific data
+     * @param measure The host measurement to take the data from
+     * @return The application measurement with more data appended into it.
+     */
+    private ApplicationMeasurement appendApplicationData(ApplicationMeasurement appData, HostMeasurement measure) {
+        List<ApplicationOnHost> appsOnThisHost = ApplicationOnHost.filter(getHostApplicationList(), measure.getHost());
+        List<ApplicationOnHost> appsRunningOnThisHost = getHostApplicationList(appsOnThisHost, JOB_STATUS.RUNNING);
+        //loop through the refreshed data and update the apps job status.
+        for (ApplicationOnHost app : appsOnThisHost) {
+            if (app.equals(appData.getApplication())) {
+                appData.getApplication().setStatus(app.getStatus());
+                break;
+            }
+        }
+        appData.addMetric(new MetricValue(APPS_STATUS, APPS_STATUS, appData.getApplication().getStatus().name(), measure.getClock()));
+        appData.addMetric(new MetricValue(APPS_ALLOCATED_TO_HOST_COUNT, APPS_ALLOCATED_TO_HOST_COUNT, appsOnThisHost.size() + "", measure.getClock()));
+        appData.addMetric(new MetricValue(APPS_RUNNING_ON_HOST_COUNT, APPS_RUNNING_ON_HOST_COUNT, appsRunningOnThisHost.size() + "", measure.getClock()));
+        return appData;
     }
 
     @Override
@@ -517,24 +794,50 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
                 String watts = getValue("CurrentWatts", values);
                 String wattskwh = getValue("ConsumedJoules", values);
                 String hostname = getValue("NodeName", values);
+            String state = getValue("State", values);
+            String coreCount = getValue("CPUTot", values);
+            if (hostname.isEmpty()) {
+                return;
+            }
                 String hostId = hostname.replaceAll("[^0-9]", "");
-                cpuMeasure.add(new SlurmDataSourceAdaptor.CPUUtilisation(clock, hostname, (Double.valueOf(getValue("CPULoad", values))) * 100));
+            CircularFifoQueue<SlurmDataSourceAdaptor.CPUUtilisation> lastCpuMeasurements = cpuMeasure.get(hostname);
+            if (lastCpuMeasurements == null) {
+                //Needs enough information to cover any recent queries of cpu utilisation, thus gather last 10mins of data
+                lastCpuMeasurements = new CircularFifoQueue<>((int) TimeUnit.MINUTES.toSeconds(10) / poller.getPollRate());
+                cpuMeasure.put(hostname, lastCpuMeasurements);
+            }
                 Host host = getHostByName(hostname);
 
             //Check for need to discover host
                 if (host == null) {
                     host = new Host(Integer.parseInt(hostId), hostname);
+                if (coreCount.matches("-?\\d+(\\.\\d+)?")) {
+                    host.setCoreCount(Integer.parseInt(coreCount));
+                }
                     hosts.put(hostname, host);
-                    System.out.println("Adding host: " + hostname);
+            }
+            host.setAvailable(!state.isEmpty() && !state.equals("DOWN*"));
+            host.setState(state);
+            /**
+             * The further metrics from this host are not relevant and may cause
+             * parse errors
+             */
+            if (!host.isAvailable()) {
+                return;
                 }
 
+            //Note CPU Load = N/A when the node is down, but perhas might occur in some other case. The previous guard should prevent this error.
+            String cpuLoad = getValue("CPULoad", values);
+            if (!cpuLoad.equals("N/A") && cpuLoad.matches("-?\\d+(\\.\\d+)?")) {
+                lastCpuMeasurements.add(new SlurmDataSourceAdaptor.CPUUtilisation(clock, hostname, (Double.valueOf(cpuLoad)) * 100));
+            }
                 HostMeasurement measurement = new HostMeasurement(host, clock);
                 measurement.addMetric(new MetricValue(KpiList.POWER_KPI_NAME, KpiList.POWER_KPI_NAME, watts, clock));
                 measurement.addMetric(new MetricValue(KpiList.ENERGY_KPI_NAME, KpiList.ENERGY_KPI_NAME, wattskwh, clock));
                 readGresString(values, measurement, clock);
                 readGresUsedString(values, measurement, clock);
                 readGenericMetrics(values, measurement, clock);
-                double cpuUtil = (Double.valueOf(getValue("CPULoad", values))) / (Double.valueOf(getValue("CPUTot", values)));
+            double cpuUtil = Double.valueOf(cpuLoad) / Double.valueOf(getValue("CPUTot", values));
                 valid = valid && validatedAddMetric(measurement, new MetricValue(KpiList.CPU_SPOT_USAGE_KPI_NAME, KpiList.CPU_SPOT_USAGE_KPI_NAME, cpuUtil * 100 + "", clock));
                 valid = valid && validatedAddMetric(measurement, new MetricValue(KpiList.CPU_IDLE_KPI_NAME, KpiList.CPU_IDLE_KPI_NAME, ((1 - cpuUtil)) * 100 + "", clock));
                 if (!valid) {
@@ -557,7 +860,8 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
                 }
             } catch (NumberFormatException ex) {
                 //Ignore these errors and carry on. It may just be the header line.
-                ex.printStackTrace();
+            Logger.getLogger(SlurmDataSourceAdaptor.class.getName()).log(Level.SEVERE,
+                    "Unexpected number format", ex);
             }
         }
 

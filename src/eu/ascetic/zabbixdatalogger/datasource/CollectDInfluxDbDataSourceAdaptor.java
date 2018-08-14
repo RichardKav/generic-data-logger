@@ -19,19 +19,22 @@
 package eu.ascetic.zabbixdatalogger.datasource;
 
 import eu.ascetic.ioutils.Settings;
+import static eu.ascetic.zabbixdatalogger.datasource.KpiList.APPS_ALLOCATED_TO_HOST_COUNT;
+import static eu.ascetic.zabbixdatalogger.datasource.KpiList.APPS_AVERAGE_POWER;
+import static eu.ascetic.zabbixdatalogger.datasource.KpiList.APPS_RUNNING_ON_HOST_COUNT;
+import eu.ascetic.zabbixdatalogger.datasource.types.ApplicationOnHost;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
 import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.influxdb.InfluxDB;
 import org.influxdb.InfluxDBFactory;
-import org.influxdb.annotation.Column;
 import org.influxdb.dto.Query;
 import org.influxdb.dto.QueryResult;
 import org.influxdb.impl.InfluxDBResultMapper;
@@ -41,7 +44,7 @@ import org.influxdb.impl.InfluxDBResultMapper;
  *
  * @author Richard Kavanagh
  */
-public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
+public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor, ApplicationDataSource {
 
     private final Settings settings = new Settings(CONFIG_FILE);
     private static final String CONFIG_FILE = "energy-modeller-influx-db-config.properties";
@@ -136,6 +139,75 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
     }
 
     @Override
+    public List<ApplicationOnHost> getHostApplicationList(ApplicationOnHost.JOB_STATUS state) {
+        return getHostApplicationList(); //Can't detect job state through influx
+    }
+
+    /**
+     * This takes a query result from the data source and converts it into a
+     * host measurement.
+     *
+     * @param host The host to convert the data for
+     * @param results The result set to convert the data for
+     * @return The host measurement
+     */
+    private List<ApplicationOnHost> convertToApplication(QueryResult results) {
+        if (results == null) {
+            return null;
+        }
+        List<ApplicationOnHost> answer = new ArrayList<>();
+        for (QueryResult.Result result : results.getResults()) {
+            if (result == null || result.getSeries() == null) {
+                Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.WARNING,
+                    "The conversion from InfluxDB to the programs internal "
+                    + "representation of an application on a host failed!");
+                return null;
+            }
+            for (QueryResult.Series series : result.getSeries()) {
+                if (series == null || series.getValues() == null) {
+                    Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.WARNING,
+                        "The conversion from InfluxDB to the programs internal "
+                        + "representation of an application on a host failed!");                    
+                    return null;
+                }
+                for (List<Object> value : series.getValues()) {
+                    /**
+                     * 
+                     * Example of metric: app_power:RK-Bench:3110
+                     * 
+                     * Clock, last(value), type, host, type_instance
+                     * Clock, 0.0, 3110, ns50, RK-BENCH
+                     * type_instance = app name
+                     * type = app id
+                     * 
+                     */
+                     ApplicationOnHost app = new ApplicationOnHost(Integer.getInteger(value.get(3) + ""), value.get(4) + "", getHostByName(value.get(3) + ""));
+                     answer.add(app);
+                }
+            }
+        }
+        return answer;
+    }    
+
+    @Override
+    public List<ApplicationOnHost> getHostApplicationList() {
+        /**
+         * Application power can list all applications that were running. It can therefore get the start and end times of any application as well.
+         * 
+         * A query such as: SELECT last(value), type, host, type_instance FROM 
+         * app_power WHERE time > now() - 30s GROUP BY type, host;
+         * 
+         * Followed by first on the selected applications. 
+         * 
+         * should be effective
+         */
+        List<ApplicationOnHost> answer;
+        QueryResult results = runQuery("SELECT last(value), type, host, type_instance FROM app_power WHERE time > now() - 30s GROUP BY type, host");
+        answer = convertToApplication(results);
+        return answer;
+    }
+
+    @Override
     public HostMeasurement getHostData(Host host) {
         if (host == null) {
             Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.SEVERE,
@@ -152,7 +224,7 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
                 listMeasurements = listMeasurements + ", " + measurement;
             }
         }
-        QueryResult results = runQuery("SELECT last(value),type_instance, instance, type FROM " + listMeasurements + " WHERE host = '" + host.getHostName() + "'  GROUP BY instance, type_instance, type;");
+        QueryResult results = runQuery("SELECT last(value),type_instance, instance, type FROM " + listMeasurements + " WHERE host = '" + host.getHostName() + "' AND time > now() - 30s GROUP BY instance, type_instance, type;");
         answer = convertToHostMeasurement(host, results);
         return answer;
     }
@@ -306,74 +378,114 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
         return new ArrayList<>(); //VMs are not currently handled by this data source adaptor.
     }
 
-    @org.influxdb.annotation.Measurement(name = "power_value")
-    public class CurrentPower {
-
-        @Column(name = "time")
-        private Instant time;
-        @Column(name = "last(value)")
-        private double value;
-    }
-
     @Override
     public double getLowestHostPowerUsage(Host host) {
+        if (host == null) {
+            Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.SEVERE,
+                        "The host to get the lowest power usage was null"); 
+            return 0.0;
+        }        
         QueryResult results = runQuery("SELECT min(value) FROM power_value WHERE host = '" + host.getHostName() + "'");
-        List<LowestPower> power = resultMapper.toPOJO(results, LowestPower.class);
-        for (LowestPower item : power) {
-            return item.value;
+        return getSingleValueOut(results);
         }
-        return 0.0;
-    }
-
-    @org.influxdb.annotation.Measurement(name = "power_value")
-    public class LowestPower {
-
-        @Column(name = "time")
-        private Instant time;
-        @Column(name = "min(value)")
-        private double value;
-    }
 
     @Override
     public double getHighestHostPowerUsage(Host host) {
-        QueryResult results = runQuery("SELECT max(value) FROM power_value WHERE host = '" + host.getHostName() + "';");
-        List<HighestPower> power = resultMapper.toPOJO(results, HighestPower.class);
-        for (HighestPower item : power) {
-            return item.value;
-        }
+        if (host == null) {
+            Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.SEVERE,
+                        "The host to get highest power usage was null"); 
         return 0.0;
     }
-
-    @org.influxdb.annotation.Measurement(name = "power_value")
-    public class HighestPower {
-
-        @Column(name = "time")
-        private Instant time;
-        @Column(name = "max(value)")
-        private double value;
+        QueryResult results = runQuery("SELECT max(value) FROM power_value WHERE host = '" + host.getHostName() + "';");
+        return getSingleValueOut(results);
     }
 
     @Override
     public double getCpuUtilisation(Host host, int durationSeconds) {
-        // {"results":[{"series":[{"name":"cpu","columns":["time","value"],
-        // "values":[["2015-06-06T14:55:27.195Z",90],["2015-06-06T14:56:24.556Z",90]]}]}]}
-        // {"results":[{"series":[{"name":"databases","columns":["name"],"values":[["mydb"]]}]}]}
-        long time = ((TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis()) - durationSeconds) << 30);
-        QueryResult results = runQuery("SELECT mean(value) FROM cpu_value WHERE host = '" + host.getHostName() + "' AND type_instance = 'idle' time > " + time);
-        List<RecentCpu> cpuList = resultMapper.toPOJO(results, RecentCpu.class);
-        for (RecentCpu item : cpuList) {
-            return item.value;
+        if (host == null) {
+            Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.SEVERE,
+                        "The host to get the CPU utilisation was null"); 
+            return 0.0;
+        }        
+        /**
+         * An example output of the query result looks like:
+         * {"results":[{"series":[{"name":"cpu","columns":["time","value"],
+         * "values":[["2015-06-06T14:55:27.195Z",90],["2015-06-06T14:56:24.556Z",90]]}]}]}
+         * {"results":[{"series":[{"name":"databases","columns":["name"],"values":[["mydb"]]}]}]}
+         */
+        QueryResult results = runQuery("SELECT mean(value) FROM cpu_value WHERE host = '" + host.getHostName() + "' AND type='percent' AND type_instance = 'idle' AND time > now() - " + durationSeconds + "s");
+        if (isQueryResultEmpty(results)) {
+            return 0.0; //Not enough data to know therefore assume zero usage.
         }
-        return 0.0;
+        BigDecimal answer = BigDecimal.valueOf(1 - getSingleValueOut(results) / 100d);
+        answer = answer.setScale(2, BigDecimal.ROUND_HALF_UP);
+        return answer.doubleValue();
     }
 
-    @org.influxdb.annotation.Measurement(name = "power_value")
-    public class RecentCpu {
+    /**
+     * This checks to see if the returned result is empty or not
+     * @param results The query result to test for emptiness
+     * @return If the query result is empty or not
+     */
+    private boolean isQueryResultEmpty(QueryResult results) {
+        if (results.getResults() == null || results.getResults().isEmpty()) {
+            return true;
+        }
+        QueryResult.Result result = results.getResults().get(0);
+        if (result.getSeries() == null || result.getSeries().isEmpty()) {
+            return true;
+        }
+        QueryResult.Series series = result.getSeries().get(0);
+        return (series.getValues() == null || series.getValues().isEmpty());
+    }
 
-        @Column(name = "time")
-        private Instant time;
-        @Column(name = "mean(value)")
-        private double value;
+    /**
+     * This parses the result of a query that provides a single result.
+     *
+     * @param results The result object to parse
+     * @return The single value returned from the query.
+     */
+    private double getSingleValueOut(QueryResult results) {
+        if (results.getResults() == null || results.getResults().isEmpty()) {
+            return 0.0;
+        }
+        QueryResult.Result result = results.getResults().get(0);
+        if (result.getSeries() == null || result.getSeries().isEmpty()) {
+            return 0.0;
+        }
+        QueryResult.Series series = result.getSeries().get(0);
+        if (series.getValues() == null || series.getValues().isEmpty()) {
+            return 0.0;
+        }
+        List<Object> value = series.getValues().get(0);
+        return (Double) value.get(1);
+    }
+
+    /**
+     * This parses the result of a query that provides the average (such as for
+     * CPU utilisation).
+     *
+     * @param results The result object to parse
+     * @return The average value returned from the query.
+     */
+    private double getAverage(QueryResult results) {
+        double total = 0.0;
+        double count = 0;
+        for (QueryResult.Result result : results.getResults()) {
+            if (result.getSeries() == null || result.getSeries().isEmpty()) {
+                return 0.0;
+        }
+            for (QueryResult.Series series : result.getSeries()) {
+                for (List<Object> value : series.getValues()) {
+                    count = count + 1;
+                    total = total + (Double) value.get(1);
+    }
+    }
+        }
+        if (count == 0) {
+            return 0;
+    }
+        return total / count;
     }
 
     /**
@@ -386,4 +498,83 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
         Query query = new Query(queryStr, dbName);
         return influxDB.query(query);
     }
+
+    @Override
+    public ApplicationMeasurement getApplicationData(ApplicationOnHost application) {
+        Host host = application.getAllocatedTo();
+        HostMeasurement measure = getHostData(host);
+        if (measure == null) {
+            return null;
+        }
+        ApplicationMeasurement answer = new ApplicationMeasurement(
+            application,
+            measure.getClock());
+            answer.setMetrics(measure.getMetrics());
+        List<ApplicationOnHost> appsOnThisHost = ApplicationOnHost.filter(getHostApplicationList(), measure.getHost());
+        answer.addMetric(new MetricValue(APPS_ALLOCATED_TO_HOST_COUNT, APPS_ALLOCATED_TO_HOST_COUNT, appsOnThisHost.size() + "", measure.getClock()));
+        //TODO change the assumption here regarding running applications
+        //Must assume all applications are running, as can't get job status.
+        answer.addMetric(new MetricValue(APPS_RUNNING_ON_HOST_COUNT, APPS_RUNNING_ON_HOST_COUNT, appsOnThisHost.size() + "", measure.getClock()));
+        answer.addMetric(new MetricValue(APPS_AVERAGE_POWER, APPS_AVERAGE_POWER, getAverageAppPower(application) + "", measure.getClock()));
+        //TODO add power consumption info? running energy for application?? or just utilisation information?? latter is best
+        return answer;
+    }
+    
+    /**
+     * This gets for a given application the average power that it consumes,
+     * over its lifetime.
+     * @param application The application to query. 
+     * @return The average power consumption of an application 
+     */
+    public double getAverageAppPower(ApplicationOnHost application) {
+        QueryResult results = runQuery("SELECT mean(value) WHERE host= '" + application.getAllocatedTo().getHostName() + "' AND type = '" + application.getId() + "' FROM app_power");
+        if (isQueryResultEmpty(results)) {
+            return 0.0; //Not enough data to know therefore assume zero usage.
+        }
+        BigDecimal answer = BigDecimal.valueOf(1 - getSingleValueOut(results) / 100d);
+        answer = answer.setScale(2, BigDecimal.ROUND_HALF_UP);
+        return answer.doubleValue();                
+    }
+    
+    /**
+     * This gets for a given application the average power that it consumes,
+     * over its lifetime.
+     * @param applicationName The application to query.
+     * @param hostname The hostname to query against, if null or empty runs against all hosts.
+     * @return average power consumption for the application
+     */
+    public double getAverageAppPower(String applicationName, String hostname) {
+        String hostQueryString = "";
+        if (hostname != null && !hostname.isEmpty()) {
+            hostQueryString = " AND host= '" + hostname + "' ";
+        }
+        QueryResult results = runQuery("SELECT mean(value) WHERE instance_type = '" + applicationName + "' " + hostQueryString + "FROM app_power");
+        if (isQueryResultEmpty(results)) {
+            return 0.0; //Not enough data to know therefore assume zero usage.
+        }
+        BigDecimal answer = BigDecimal.valueOf(1 - getSingleValueOut(results) / 100d);
+        answer = answer.setScale(2, BigDecimal.ROUND_HALF_UP);
+        return answer.doubleValue();                
+    }    
+
+    @Override
+    public List<ApplicationMeasurement> getApplicationData() {
+        return getApplicationData(getHostApplicationList());
+    }
+
+    @Override
+    public List<ApplicationMeasurement> getApplicationData(List<ApplicationOnHost> appList) {
+        if (appList == null) {
+            return getApplicationData();
+        }
+        ArrayList<ApplicationMeasurement> answer = new ArrayList<>();
+        for (ApplicationOnHost app : appList) {
+            ApplicationMeasurement measurement = getApplicationData(app);
+            if (measurement != null) {
+                answer.add(measurement);
+            }
+        }
+        return answer;
+    }
+       
 }
