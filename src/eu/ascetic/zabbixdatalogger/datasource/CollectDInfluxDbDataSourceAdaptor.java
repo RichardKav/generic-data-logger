@@ -43,7 +43,6 @@ import org.influxdb.impl.InfluxDBResultMapper;
  */
 public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
 
-    private final HashMap<String, Host> knownHosts = new HashMap<>();
     private final Settings settings = new Settings(CONFIG_FILE);
     private static final String CONFIG_FILE = "energy-modeller-influx-db-config.properties";
     private final String hostname;
@@ -82,9 +81,9 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
 
     @Override
     public Host getHostByName(String hostname) {
-        HashMap<String, Host> knownHosts = getHostListAsHashMap();
-        if (knownHosts.containsKey(hostname)) {
-            return knownHosts.get(hostname);
+        HashMap<String, Host> hostList = getHostListAsHashMap();
+        if (hostList.containsKey(hostname)) {
+            return hostList.get(hostname);
         } else {
             return null;
         }
@@ -125,7 +124,7 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
     @Override
     public List<MonitoredEntity> getHostAndVmList() {
         List<MonitoredEntity> answer = new ArrayList<>();
-        for (Host host : knownHosts.values()) {
+        for (Host host : getHostListAsHashMap().values()) {
             answer.add(host);
         }
         return answer;
