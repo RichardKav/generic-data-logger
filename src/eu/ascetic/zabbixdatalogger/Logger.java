@@ -15,7 +15,10 @@
  */
 package eu.ascetic.zabbixdatalogger;
 
+import eu.ascetic.zabbixdatalogger.datasource.CollectDInfluxDbDataSourceAdaptor;
+import eu.ascetic.zabbixdatalogger.datasource.CollectdDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.DataSourceAdaptor;
+import eu.ascetic.zabbixdatalogger.datasource.SlurmDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.ZabbixDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.ZabbixDirectDbDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
@@ -28,7 +31,8 @@ import java.util.Scanner;
 import java.util.logging.Level;
 
 /**
- * This application logs out the raw data that is received from Zabbix.
+ * This application logs out the raw data that is received from Zabbix, CollectD 
+ * or SLURM.
  */
 public class Logger {
 
@@ -57,6 +61,25 @@ public class Logger {
         DataSourceAdaptor adaptor;
         if ((strArgs.contains("json") || strArgs.contains("j"))) {
             adaptor = new ZabbixDataSourceAdaptor();
+        } else if (strArgs.contains("influx")  || strArgs.contains("i")) {
+            adaptor = new CollectDInfluxDbDataSourceAdaptor();
+        } else if ((strArgs.contains("collectd") || strArgs.contains("d"))) {
+            adaptor = new CollectdDataSourceAdaptor();
+            try {
+                Thread.sleep(20000);
+            } catch (InterruptedException ex) {
+                java.util.logging.Logger.getLogger(Logger.class.getName()).log(Level.SEVERE, null, ex);
+            }
+            for (Host hostToList : adaptor.getHostList()) {
+                System.out.println(hostToList.getHostName());
+            }
+        } else if ((strArgs.contains("slurm") || strArgs.contains("s"))) {
+            adaptor = new SlurmDataSourceAdaptor();
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException ex) {
+                java.util.logging.Logger.getLogger(Logger.class.getName()).log(Level.SEVERE, null, ex);
+            }
         } else {
             adaptor = new ZabbixDirectDbDataSourceAdaptor();
         }
@@ -66,7 +89,7 @@ public class Logger {
             vm = adaptor.getVmByName(hostname);
         }
         while (running) {
-            if (host != null) {
+            if (host != null && adaptor.getHostData(host) != null) {
                 logger.printToFile(adaptor.getHostData(host));
             } else if (vm != null) {
                 logger.printToFile(adaptor.getVmData(vm));

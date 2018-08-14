@@ -24,6 +24,7 @@ public abstract class KpiList {
 
     //Power and energy
     public static final String POWER_KPI_NAME = "power";
+    public static final String ESTIMATED_POWER_KPI_NAME = "power-estimated";
     public static final String ENERGY_KPI_NAME = "energy";
     //CPU based metrics
     public static final String CPU_COUNT_KPI_NAME = "system.cpu.num";
@@ -36,6 +37,7 @@ public abstract class KpiList {
     public static final String CPU_SYSTEM_KPI_NAME = "system.cpu.util[,system]";
     public static final String CPU_USER_KPI_NAME = "system.cpu.util[,user]";
     public static final String CPU_SPOT_USAGE_KPI_NAME = "cpu-measured";
+    public static final String CPU_SPOT_USAGE_KPI_NAME2 = "cpu.measured";
     public static final String CPU_LOAD_LAST_1_MIN_KPI_NAME = "system.cpu.load[percpu,avg1]";
     public static final String CPU_LOAD_LAST_5_MIN_KPI_NAME = "system.cpu.load[percpu,avg5]";
     public static final String CPU_LOAD_LAST_15_MIN_KPI_NAME = "system.cpu.load[percpu,avg15]";    
@@ -58,5 +60,16 @@ public abstract class KpiList {
     public static final String BOOT_TIME_KPI_NAME = "system.boottime";
     //physical host mapping
     public static final String VM_PHYSICAL_HOST_NAME = "physical_host";
+    public static final String VM_PHYSICAL_HOST_NAME_2 = "physical.host";
+    //accelerators
+    public static final String HAS_ACCELERATOR = "has_accelerator";
+    public static final String HAS_GPU = "has_gpu";
+    public static final String GPU_NAME = "gpu_name";
+    public static final String GPU_COUNT = "gpu_count";
+    public static final String GPU_USED = "gpu_used";
+    public static final String HAS_MIC = "has_many_integrated_core";
+    public static final String MIC_NAME = "mic_name";
+    public static final String MIC_COUNT = "mic_count";    
+    public static final String MIC_USED = "mic_used";   
 
 }

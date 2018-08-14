@@ -29,7 +29,7 @@ import java.util.logging.Level;
  */
 public class MeasurementLogger extends GenericLogger<Measurement> {
 
-    ArrayList<String> metricNames = new ArrayList<>();
+    private final ArrayList<String> metricNames = new ArrayList<>();
 
     public MeasurementLogger(File file, boolean overwrite) {
         super(file, overwrite);
@@ -69,7 +69,15 @@ public class MeasurementLogger extends GenericLogger<Measurement> {
             }
         } catch (Exception ex) {
             //logging is important but should not stop the main thread from running!
-            java.util.logging.Logger.getLogger(GenericLogger.class.getName()).log(Level.SEVERE, "An error occurred when saving an item to disk", ex);
+            java.util.logging.Logger.getLogger(MeasurementLogger.class.getName()).log(Level.SEVERE, "An error occurred when saving an item to disk", ex);
+        }
+    }
+
+    private void metricNamesAdd(Measurement measurement) {
+        for (String metricName : measurement.getMetricNameList()) {
+            if (!metricNames.contains(metricName)) {
+                metricNames.add(metricName);
+            }
         }
     }
 
@@ -83,6 +91,11 @@ public class MeasurementLogger extends GenericLogger<Measurement> {
 
     @Override
     public void writebody(Measurement item, ResultsStore store) {
+        if (item.getMetricNameList().size() > metricNames.size()) {
+            //Reprint Column Headers and write out new data items
+            metricNamesAdd(item);
+            writeHeader(store);
+        }
         store.add(item.getClock());
         for (String name : metricNames) {
             store.append(item.getMetric(name).getValueAsString());
