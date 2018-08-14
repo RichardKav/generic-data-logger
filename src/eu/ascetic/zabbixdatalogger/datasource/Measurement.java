@@ -21,6 +21,7 @@ import static eu.ascetic.zabbixdatalogger.datasource.KpiList.CPU_IO_WAIT_KPI_NAM
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.CPU_NICE_KPI_NAME;
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.CPU_SOFT_IRQ_KPI_NAME;
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.CPU_SPOT_USAGE_KPI_NAME;
+import static eu.ascetic.zabbixdatalogger.datasource.KpiList.CPU_SPOT_USAGE_KPI_NAME2;
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.CPU_STEAL_KPI_NAME;
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.CPU_SYSTEM_KPI_NAME;
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.CPU_USER_KPI_NAME;
@@ -28,10 +29,15 @@ import static eu.ascetic.zabbixdatalogger.datasource.KpiList.MEMORY_AVAILABLE_KP
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.MEMORY_TOTAL_KPI_NAME;
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.NETWORK_IN_STARTS_WITH_KPI_NAME;
 import static eu.ascetic.zabbixdatalogger.datasource.KpiList.NETWORK_OUT_STARTS_WITH_KPI_NAME;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * This is the base class for all measurements, either for a vm instance or a
@@ -113,6 +119,23 @@ public abstract class Measurement {
     }
 
     /**
+     * This looks at the metrics gained and compares a named metric and a
+     * specified time and indicates if the values are close enough together.
+     *
+     * @param time The time to compare the metric to
+     * @return The difference in seconds between the metric's clock value and
+     * the time specified in Unix time.
+     */
+    public long getClockDifference(long time) {
+        long first = clock;
+        if (time > first) {
+            return time - first;
+        } else {
+            return first - time;
+        }
+    }
+
+    /**
      * This tests to see if for this measurement record that two metrics have
      * clock values that are within an acceptable tolerance bound.
      *
@@ -143,6 +166,44 @@ public abstract class Measurement {
     public boolean isContemporary(String metricName, long time, int tolerance) {
         return getClockDifference(metricName, time) <= tolerance;
     }
+
+    /**
+     * This tests to see if for this measurement record to see if a metric has a
+     * clock value that is within an acceptable tolerance bound.
+     *
+     * @param time The time to compare the metric to
+     * @param tolerance The amount of seconds gap allowed between the
+     * measurement and the specified time for the record to be valid for the
+     * required analysis.
+     * @return If this measurement record is valid for performing analysis on
+     * based upon the difference between a metric's clock value and a specified
+     * time.
+     */
+    public boolean isContemporary(long time, int tolerance) {
+        return getClockDifference(getClockDifference(time)) <= tolerance;
+    }
+    
+    /**
+     * This removes stale data from the measurement.
+     * @param tolerance The tolerance in seconds from the latest measurement
+     * @return The count of metric values removed
+     */
+    public int cleanStaleMetrics(int tolerance) {
+        int count = 0;
+        ArrayList<String> toRemove = new ArrayList<>();
+        for (Iterator<Map.Entry<String,MetricValue>> iterator = metrics.entrySet().iterator(); iterator.hasNext();) {
+            Object next = iterator.next();
+            Map.Entry<String,MetricValue> item = (Map.Entry<String,MetricValue>)next;
+            if (!isContemporary(item.getValue().getName(),clock , tolerance)) {
+                toRemove.add(item.getKey());
+                count = count + 1;
+            }
+        }
+        for (String item : toRemove) {
+            metrics.remove(item);
+        }
+        return count;
+    }    
 
     /**
      * This returns the maximum delay that any metric encountered.
@@ -226,19 +287,70 @@ public abstract class Measurement {
     }
 
     /**
-     * This adds a metric and value to a measurement
+     * This adds a metric and value to a measurement. If item is newer than the
+     * value that already exists then it will be updated.
      *
      * @param item a metric to add to this measurement dataset
      */
     public void addMetric(MetricValue item) {
+        if (item == null) {
+            Logger.getLogger(Measurement.class.getName()).log(Level.INFO, "Adding metric failed the value was null");
+            throw new NullPointerException("Adding metric failed the value was null");
+//            return; //Don't allow null metric values
+        }
+        if (item.getValueAsString().isEmpty()) {
+            return; //Don't allow empty values          
+        }
         if (!metrics.containsKey(item.getKey())) {
             metrics.put(item.getKey(), item);
         } else {
             MetricValue existing = metrics.get(item.getKey());
             // Add only the newer of the two items.
-            if (item.getClock() > existing.getClock()) {
+            if (existing != null && item.getClock() > existing.getClock()) {
                 metrics.put(item.getKey(), item);
             }
+        }
+    }
+
+    /**
+     * This deletes a metric and value from a measurement.
+     *
+     * @param metricName a metric to delete from this measurement dataset
+     */
+    public void deleteMetric(String metricName) {
+        if (metricName == null) {
+           return; //Don't allow null metric values
+        }
+        if (!metrics.containsKey(metricName)) {
+            metrics.remove(metricName);
+        }
+    }
+
+    /**
+     * This adds several metrics and value to a measurement. 
+     * If item is newer than the value that already exists then it will be updated.
+     *
+     * @param items a metric to add to this measurement dataset
+     */
+    public void addMetrics(Collection<MetricValue> items) {
+        for (MetricValue item : items) {
+            addMetric(item);
+        }
+    }
+
+    /**
+     * This adds several metrics and value to a measurement, essentially combining two 
+     * measurement objects. If an item in the measurement is newer than the value 
+     * that already exists then it will be updated.
+     *
+     * @param measurement a metric to add to this measurement dataset
+     */
+    public void addMetrics(Measurement measurement) {
+        for (MetricValue item : measurement.getItems()) {
+            addMetric(item);
+        }
+        if (this.clock < measurement.getClock()) {
+            setClock(measurement.getClock());
         }
     }
 
@@ -250,6 +362,27 @@ public abstract class Measurement {
      */
     public MetricValue getMetric(String key) {
         return metrics.get(key);
+    }
+    
+    /**
+     * This gets the item that represents a given metric
+     *
+     * @param key The key that is used to identify a given measurement
+     * @return The metric and its value that is identified by the key.
+     */    
+    public HashSet<MetricValue> getMetricByRegularExpression(String key) {
+        HashSet<MetricValue> answer = new HashSet<>();
+        if (metrics.get(key) != null) {
+            answer.add(metrics.get(key));
+            return answer;
+        }
+        Set<String> keys = metrics.keySet();
+        for (String currentKey : keys) {
+            if (currentKey.matches(key)) {
+                answer.add(metrics.get(currentKey));
+            }
+        }
+        return answer;
     }
 
     /**
@@ -289,6 +422,9 @@ public abstract class Measurement {
     public double getCpuUtilisation() {
         if (metrics.containsKey(CPU_SPOT_USAGE_KPI_NAME)) {
             return this.getMetric(CPU_SPOT_USAGE_KPI_NAME).getValue() / 100;
+        }
+        if (metrics.containsKey(CPU_SPOT_USAGE_KPI_NAME2)) {
+            return this.getMetric(CPU_SPOT_USAGE_KPI_NAME2).getValue() / 100;
         }
         double interrupt = 0.0;
         double iowait = 0.0;
@@ -362,9 +498,9 @@ public abstract class Measurement {
      */
     public double getCpuIdle() {
         if (metrics.containsKey(CPU_SPOT_USAGE_KPI_NAME)) {
-            return 1 - this.getMetric(CPU_SPOT_USAGE_KPI_NAME).getClock();
+            return 1.0 - this.getMetric(CPU_SPOT_USAGE_KPI_NAME).getValue();
         }
-        return this.getMetric(CPU_IDLE_KPI_NAME).getValue() / 100;
+        return this.getMetric(CPU_IDLE_KPI_NAME).getValue() / 100.0;
     }
 
     /**

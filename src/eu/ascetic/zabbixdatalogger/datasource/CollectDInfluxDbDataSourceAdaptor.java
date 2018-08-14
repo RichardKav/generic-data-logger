@@ -19,19 +19,21 @@
 package eu.ascetic.zabbixdatalogger.datasource;
 
 import eu.ascetic.ioutils.Settings;
-import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
+import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import org.influxdb.InfluxDB;
 import org.influxdb.InfluxDBFactory;
 import org.influxdb.annotation.Column;
 import org.influxdb.dto.Query;
 import org.influxdb.dto.QueryResult;
-import java.time.Instant;
 import org.influxdb.impl.InfluxDBResultMapper;
 
 /**
@@ -63,6 +65,13 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
         }
     }
 
+    /**
+     * Creates a new CollectD (via InfluxDB) data source adaptor).
+     * @param hostname The hostname of the database to connect to
+     * @param user The username for the database
+     * @param password The password
+     * @param dbName The database to connect to
+     */
     public CollectDInfluxDbDataSourceAdaptor(String hostname, String user, String password, String dbName) {
         this.hostname = hostname;
         this.user = user;
@@ -73,7 +82,7 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
 
     @Override
     public Host getHostByName(String hostname) {
-        populateHostList();
+        HashMap<String, Host> knownHosts = getHostListAsHashMap();
         if (knownHosts.containsKey(hostname)) {
             return knownHosts.get(hostname);
         } else {
@@ -83,7 +92,7 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
 
     @Override
     public VmDeployed getVmByName(String name) {
-        Host host = knownHosts.get(name);
+        Host host = getHostListAsHashMap().get(name);
         if (host == null) {
             return null;
         }
@@ -92,32 +101,25 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
 
     @Override
     public List<Host> getHostList() {
-        populateHostList();
+        HashMap<String, Host> knownHosts = getHostListAsHashMap();
         return new ArrayList<>(knownHosts.values());
     }
 
-    /**
-     * This ensures the hostlist is fully populated before querying.
-     */
-    private void populateHostList() {
+    private HashMap<String, Host> getHostListAsHashMap() {
+        HashMap<String, Host> knownHosts = new HashMap<>();
         QueryResult results = runQuery("SHOW TAG VALUES WITH KEY=host;");
-        List<HostList> hosts = resultMapper.toPOJO(results, HostList.class);
-        for (HostList item : hosts) {
-            if (!knownHosts.containsKey(item.value)) {
-                String hostId = hostname.replaceAll("[^0-9]", "");
-                Host host = new Host(Integer.parseInt(hostId), item.value);
-                knownHosts.put(hostId, host);
+        for (QueryResult.Result result : results.getResults()) {
+            for (QueryResult.Series series : result.getSeries()) {
+                for (List<Object> value : series.getValues()) {
+                    if (!knownHosts.containsKey((String) value.get(1))) {
+                        String hostId = ((String) value.get(1)).replaceAll("[^0-9]", "");
+                        Host host = new Host(Integer.parseInt(hostId), (String) value.get(1));
+                        knownHosts.put((String) value.get(1), host);
+                    }
             }
         }
     }
-
-    @org.influxdb.annotation.Measurement(name = "host_tags")
-    public class HostList {
-
-        @Column(name = "key")
-        private String key;
-        @Column(name = "value")
-        private String value;
+        return knownHosts;
     } 
     
     @Override
@@ -136,6 +138,11 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
 
     @Override
     public HostMeasurement getHostData(Host host) {
+        if (host == null) {
+            Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.SEVERE,
+                        "The host to get data for was null"); 
+            return null;
+        }        
         HostMeasurement answer;
         String listMeasurements = "";
         ArrayList<String> measurements = getMeasurements();
@@ -146,24 +153,115 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
                 listMeasurements = listMeasurements + ", " + measurement;
             }
         }
-        QueryResult results = runQuery("SELECT last(value),type_instance FROM " + listMeasurements + " WHERE host = " + host.getHostName() + ";");
+        QueryResult results = runQuery("SELECT last(value),type_instance, instance, type FROM " + listMeasurements + " WHERE host = '" + host.getHostName() + "'  GROUP BY instance, type_instance, type;");
         answer = convertToHostMeasurement(host, results);
         return answer;
     }
     
+    /**
+     * This takes a query result from the data source and converts it into a
+     * host measurement.
+     *
+     * @param host The host to convert the data for
+     * @param results The result set to convert the data for
+     * @return The host measurement
+     */
     private HostMeasurement convertToHostMeasurement(Host host, QueryResult results) {
+        if (results == null) {
+            return null;
+        }
          HostMeasurement answer = new HostMeasurement(host);
+        double acceleratorPowerUsed = 0.0;
          for(QueryResult.Result result: results.getResults()) {
+            if (result == null || result.getSeries() == null) {
+                return null;
+            }
+            addCpuUtilisationInfo(answer, result);
              for (QueryResult.Series series : result.getSeries()) {
+                if (series == null || series.getValues() == null) {
+                    return null;
+                }
                  for(List<Object> value : series.getValues()) {
-                     System.out.println(value);
+                    Instant time = Instant.parse((String) value.get(0));
+                    String metricName = series.getName() + ":" + (value.get(2) == null ? "" : value.get(2));
+                    if (value.size() >= 4) {
+                        metricName = metricName + ":" + (value.get(3) == null ? "" : value.get(3));
+                    }
+                    if (value.size() >= 5) {
+                        metricName = metricName + ":" + (value.get(4) == null ? "" : value.get(4));
+                    }
+                    if (metricName.equals("power_value:estimated::power")) {
+                        MetricValue estimatedPower = new MetricValue(KpiList.ESTIMATED_POWER_KPI_NAME, KpiList.ESTIMATED_POWER_KPI_NAME, value.get(1).toString(), time.getEpochSecond());
+                        answer.addMetric(estimatedPower);
+                    }
+                    if (metricName.equals("power_value:measured::power")) {
+                        MetricValue estimatedPower = new MetricValue(KpiList.POWER_KPI_NAME, KpiList.POWER_KPI_NAME, value.get(1).toString(), time.getEpochSecond());
+                        answer.addMetric(estimatedPower);
+                    }                      
+                    /**
+                     * This counts up all power consumed and reported by the
+                     * monitoring infrastructure usually in the format:
+                     * nvidia_value::0:nvidia:power (i.e. card 1)
+                     * nvidia_value::1:nvidia:power (and card 2)
+                     */
+                    try {
+                        if (metricName.matches("nvidia_value::[0-9]+:power")) {
+                            acceleratorPowerUsed = acceleratorPowerUsed + Double.parseDouble(value.get(1).toString());
+                        }
+                    } catch (NumberFormatException ex) {
+                        Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.WARNING, "Parsing input from collectd failed", ex);
                  }
-                 //MetricValue metric = new MetricValue(series.getName(),series.getName(),0, 0);
+                    MetricValue metric = new MetricValue(metricName, metricName, value.get(1).toString(), time.getEpochSecond());
+                    answer.addMetric(metric);
+                    if (time.getEpochSecond() > answer.getClock()) {
+                        answer.setClock(time.getEpochSecond());
+                    }
              }
          }
+        }
+        if (acceleratorPowerUsed > 0) {
+            MetricValue metric = new MetricValue(KpiList.ACCELERATOR_POWER_USED, KpiList.ACCELERATOR_POWER_USED, Double.toString(acceleratorPowerUsed), answer.getClock());
+            answer.addMetric(metric);
+        }
          return answer;
     }
 
+    /**
+     * This method appends to a host measurement cpu utilisation information.
+     * @param measurement The host measurement to append
+     * @param result The results that contain cpu utilisation information.
+     */
+    private HostMeasurement addCpuUtilisationInfo(HostMeasurement measurement, QueryResult.Result result) {
+        double count = 0;
+        double idleValue = 0;
+        Instant time = null;
+        for (QueryResult.Series series : result.getSeries()) {
+            for (List<Object> value : series.getValues()) {
+                time = Instant.parse((String) value.get(0));
+                String metricName = series.getName() + ":" + (value.get(2) == null ? "" : value.get(2));
+                if (value.size() >= 4) {
+                    metricName = metricName + ":" + (value.get(3) == null ? "" : value.get(3));
+                }
+                if (value.size() >= 5) {
+                    metricName = metricName + ":" + (value.get(4) == null ? "" : value.get(4));
+                }   
+                if (metricName.matches("cpu_value:idle:[0-9]+:percent")) {
+                    count = count + 1;
+                    idleValue = idleValue + Double.parseDouble(value.get(1).toString());
+                }
+            }  
+        }
+        if (count > 0 && time != null) {
+            double idleMetricValue = idleValue / count;
+            idleMetricValue = idleMetricValue / 100; //make sure its in the range 0..1 instead of 0..100
+            MetricValue idle = new MetricValue(KpiList.CPU_IDLE_KPI_NAME, KpiList.CPU_IDLE_KPI_NAME, idleMetricValue + "", time.getEpochSecond());
+            measurement.addMetric(idle);
+            MetricValue spotCpu = new MetricValue(KpiList.CPU_SPOT_USAGE_KPI_NAME, KpiList.CPU_SPOT_USAGE_KPI_NAME, 1 - idleMetricValue + "", time.getEpochSecond());
+            measurement.addMetric(spotCpu);             
+        }
+        return measurement;
+    }
+    
     @Override
     public List<HostMeasurement> getHostData() {
         return getHostData(getHostList());
@@ -175,19 +273,16 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
     private ArrayList<String> getMeasurements() {
         ArrayList<String> answer = new ArrayList<>();
         QueryResult results = runQuery("show measurements");
-        List<MeasurementName> measurements = resultMapper.toPOJO(results, MeasurementName.class);
-        for (MeasurementName measurement : measurements) {
-            answer.add(measurement.name);
+        for (QueryResult.Result result : results.getResults()) {
+            for (QueryResult.Series series : result.getSeries()) {
+                for (List<Object> value : series.getValues()) {
+                    answer.add((String) value.get(0));
+                }
+        }
         }
         return answer;
     }
     
-    @org.influxdb.annotation.Measurement(name = "measurements")
-    public class MeasurementName {
-        @Column(name = "name")
-        private String name;
-    }    
-
     @Override
     public List<HostMeasurement> getHostData(List<Host> hostList) {
         ArrayList<HostMeasurement> answer = new ArrayList<>();
@@ -204,12 +299,12 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor {
 
     @Override
     public List<VmMeasurement> getVmData() {
-        return null; //VMs are not currently handled by this data source adaptor.
+        return new ArrayList<>(); //VMs are not currently handled by this data source adaptor.
     }
 
     @Override
     public List<VmMeasurement> getVmData(List<VmDeployed> vmList) {
-        return null; //VMs are not currently handled by this data source adaptor.
+        return new ArrayList<>(); //VMs are not currently handled by this data source adaptor.
     }
 
     @org.influxdb.annotation.Measurement(name = "power_value")

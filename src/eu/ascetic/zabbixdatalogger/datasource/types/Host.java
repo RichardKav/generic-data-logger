@@ -15,6 +15,8 @@
  */
 package eu.ascetic.zabbixdatalogger.datasource.types;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Objects;
 
 /**
@@ -32,8 +34,11 @@ public class Host extends MonitoredEntity implements Comparable<Host> {
     private int id = -1;
     private String hostName = "";
     private boolean available = true;
+    private String state = "";
+    private int coreCount;
     private int ramMb;
     private double diskGb;
+    private final HashSet<Accelerator> accelerators = new HashSet<>();
 
     /**
      * E_i^0: is the "idle power consumption" in Watts (with zero number of VMs
@@ -61,6 +66,23 @@ public class Host extends MonitoredEntity implements Comparable<Host> {
     public Host(int id, String hostName) {
         this.id = id;
         this.hostName = hostName;
+    }
+
+    /**
+     * This is a copy constructor for a host
+     * @param id The host id
+     * @param hostName The host name
+     * @param host The old host to copy information from
+     */
+    public Host(int id, String hostName, Host host) {
+        this.id = id;
+        this.hostName = hostName;
+        this.available = true;
+        this.state = host.getState();
+        this.coreCount = host.getCoreCount();
+        this.ramMb = host.getRamMb();
+        this.diskGb = host.getDiskGb();       
+        this.accelerators.addAll(host.getAccelerators());
     }
 
     /**
@@ -117,9 +139,29 @@ public class Host extends MonitoredEntity implements Comparable<Host> {
         this.available = available;
     }
 
+    /**
+     * This indicates the state of the host and allows for more complex states
+     * rather than just up or down. Such as SLURMs drain and maintenance states.
+     * @return 
+     */
+    public String getState() {
+        return state;
+    }
+
+    /**
+     * This allows the state of the host to be set. This property allows for more 
+     * complex states rather than just up or down. Such as SLURMs drain and 
+     * maintenance states.
+     * @param state 
+     */
+    public void setState(String state) {
+        this.state = state;
+    }    
+
     @Override
     public String toString() {
-        return "HostID: " + id + " Host Name: " + hostName + " Available :" + available;
+        return "HostID: " + id + " Host Name: " + hostName + " Available: " + available  
+                + " Has Accelerator: " + hasAccelerator() + " Has GPU: " + hasGpu() + " Has MIC: " + hasMic();
     }
 
     @Override
@@ -189,6 +231,27 @@ public class Host extends MonitoredEntity implements Comparable<Host> {
     }
 
     /**
+     * This gets the maximum amount of cores this host has.
+     *
+     * @return The core count this host has physically available.
+     */    
+    public int getCoreCount() {
+        return coreCount;
+    }
+
+    /**
+     * This sets the maximum amount of cpus this host has.
+     *
+     * @param coreCount The core count this host has physically available.
+     */    
+    public void setCoreCount(int coreCount) {
+        if (coreCount < 0) {
+            throw new IllegalArgumentException("The amount of cores must not be less than zero.");
+        }        
+        this.coreCount = coreCount;
+    }
+    
+    /**
      * This gets the maximum amount of ram this host has.
      *
      * @return The ram this host has physically available.
@@ -229,5 +292,115 @@ public class Host extends MonitoredEntity implements Comparable<Host> {
         }
         this.diskGb = diskGb;
     }
+    
+    /**
+     * Indicates if this host has an accelerator or not
+     * @return if the host has any type of accelerator or not 
+     */
+    public synchronized boolean hasAccelerator () {
+        return !accelerators.isEmpty();
+    }
+    
+    /**
+     * Indicates if this host has an GPU as an accelerator or not
+     * @return If the host has a GPU or not
+     */
+    public synchronized boolean hasGpu () {
+        for (Accelerator current : accelerators) {
+            if (current.getType().equals(Accelerator.AcceleratorType.GPU))
+                return true;
+        }
+        return false;
+    }
+    
+    /**
+     * Indicates if this host has a Intel Many Integrated Core (MIC) processor 
+     * as an accelerator or not
+     * @return if the host has a Intel Many Integrated Core (MIC) processor 
+     */
+    public synchronized boolean hasMic () {
+        for (Accelerator current : accelerators) {
+            if (current.getType().equals(Accelerator.AcceleratorType.MIC))
+                return true;
+        }
+        return false;
+    }
+    
+    /**
+     * Provides the count of GPUs attached to the host
+     * @return The count of GPUs attached to the host
+     */
+    public synchronized int getGpuCount () {
+        int count = 0;
+        for (Accelerator current : accelerators) {
+            if (current.getType().equals(Accelerator.AcceleratorType.GPU))
+                count = count + current.getCount();
+        }
+        return count;
+    }
+    
+    /**
+     * Provides the count of Intel Many Integrated Core (MIC) processor attached to the host
+     * @return The count of Intel Many Integrated Core (MIC) processor attached to the host
+     */
+    public synchronized int getMicCount () {
+        int count = 0;
+        for (Accelerator current : accelerators) {
+            if (current.getType().equals(Accelerator.AcceleratorType.MIC))
+                count = count + current.getCount();
+        }
+        return count;
+    }    
+    
+    /**
+     * Adds an accelerator to the physical host
+     * @param accelerator Indicates which accelerator to add to the host.
+     */
+    public synchronized void addAccelerator(Accelerator accelerator) {
+        if (!accelerators.contains(accelerator)) {
+            this.accelerators.add(accelerator);
+        }
+    }
+    
+    /**
+     * Adds an accelerator to the physical host
+     * @param accelerator Indicates which accelerator to add to the host.
+     */
+    public synchronized void addAccelerator(Accelerator.AcceleratorType accelerator) {
+        this.accelerators.add(new Accelerator("",1, accelerator));
+    }    
+    
+    /**
+     * Adds an accelerator to the physical host
+     * @param accelerator Indicates which accelerator to add to the host.
+     */
+    public synchronized void addAccelerator(HashSet<Accelerator> accelerator) {
+        this.accelerators.addAll(accelerator);
+    } 
+    
+    /**
+     * Removes an accelerator to the physical host
+     * @param accelerator Indicates which accelerator to remove from the host.
+     */
+    public synchronized void removeAccelerator(Accelerator accelerator) {
+        this.accelerators.remove(accelerator);
+    }
+    
+    /**
+     * Removes an accelerator to the physical host
+     * @param accelerator Indicates which accelerator to remove from the host.
+     */
+    public synchronized void removeAccelerator(HashSet<Accelerator> accelerator) {
+        this.accelerators.removeAll(accelerator);
+    }
+    
+    /**
+     * This provides the list of accelerators for this physical host.
+     * @return The list of accelerators this host has.
+     */
+    public synchronized HashSet<Accelerator> getAccelerators() {
+        return (HashSet<Accelerator>) accelerators.clone();
+    }
+    
 
 }

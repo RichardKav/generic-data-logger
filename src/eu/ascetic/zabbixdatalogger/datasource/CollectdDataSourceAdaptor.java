@@ -28,7 +28,7 @@ import org.jcollectd.agent.protocol.Dispatcher;
 import org.jcollectd.server.protocol.UdpReceiver;
 
 /**
- * This adaptor allows for the use of collectD as a data source.
+ * This adaptor allows for the use of CollectD as a data source.
  *
  * @author Richard Kavanagh
  */
@@ -43,7 +43,6 @@ public class CollectdDataSourceAdaptor implements DataSourceAdaptor, Dispatcher 
         reciever.setDispatcher(this);
         recieverThread.setDaemon(true);
         recieverThread.start();
-        
     }
     
     @Override
@@ -86,7 +85,7 @@ public class CollectdDataSourceAdaptor implements DataSourceAdaptor, Dispatcher 
 
     @Override
     public List<HostMeasurement> getHostData() {
-        return new ArrayList(recentMeasurements.values());
+        return new ArrayList<>(recentMeasurements.values());
     }
 
     @Override
@@ -103,17 +102,17 @@ public class CollectdDataSourceAdaptor implements DataSourceAdaptor, Dispatcher 
 
     @Override
     public VmMeasurement getVmData(VmDeployed vm) {
-        return null; //VMs are not currenlty handled by this data source adaptor.
+        return null; //VMs are not currently handled by this data source adaptor.
     }
 
     @Override
     public List<VmMeasurement> getVmData() {
-        return null; //VMs are not currenlty handled by this data source adaptor.
+        return null; //VMs are not currently handled by this data source adaptor.
     }
 
     @Override
     public List<VmMeasurement> getVmData(List<VmDeployed> vmList) {
-        return null; //VMs are not currenlty handled by this data source adaptor.
+        return null; //VMs are not currently handled by this data source adaptor.
     }
 
     @Override
@@ -136,10 +135,9 @@ public class CollectdDataSourceAdaptor implements DataSourceAdaptor, Dispatcher 
         Host host;
         //Populate the host list
         if (!knownHosts.containsKey(values.getHost())) {
-            Host newHost = new Host(0, values.getHost());
-            host = newHost;
-            knownHosts.put(values.getHost(), newHost);
-            System.out.println("Host discovered: " + host.getHostName());
+            String hostId = values.getHost().replaceAll("[^0-9]", "");
+            host = new Host(Integer.parseInt(hostId), values.getHost());
+            knownHosts.put(values.getHost(), host);
         } else {
             host = knownHosts.get(values.getHost());
         }

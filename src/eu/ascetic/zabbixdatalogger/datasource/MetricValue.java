@@ -19,7 +19,7 @@ package eu.ascetic.zabbixdatalogger.datasource;
  * This class records the value of a specific metric. It is aimed at separating
  * out the measurement from the origin of the value, i.e. Zabbix/Ganglia etc
  *
- * @author Richard
+ * @author Richard Kavanagh
  */
 public class MetricValue {
 

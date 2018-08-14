@@ -20,7 +20,7 @@ import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
 /**
  * This represents a single snapshot of the data from a data source.
  *
- * @author Richard
+ * @author Richard Kavanagh
  */
 public class VmMeasurement extends Measurement {
 

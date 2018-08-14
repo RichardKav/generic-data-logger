@@ -16,6 +16,7 @@
 package eu.ascetic.zabbixdatalogger.datasource;
 
 import eu.ascetic.ioutils.Settings;
+import eu.ascetic.zabbixdatalogger.datasource.types.Accelerator;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
 import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
@@ -56,7 +57,7 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
     }
 
     /**
-     * This is the generic startup code for the WattsUp data source adaptor
+     * This is the generic startup code for the Slurm data source adaptor
      *
      * @param interval The interval at which to take logging data.
      */
@@ -356,6 +357,10 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
          */
         private HostMeasurement readGresString(String[] values, HostMeasurement measurement, long clock) {
             String gresString = getValue("Gres", values);
+        if (gresString.isEmpty()) {
+            // This indicates that there is no accelerator
+            gresString = "(null)";
+        }
             /*
              * Example gresString = "gpu:teslak20:2"
              * or "craynetwork:3,hbm:0"
@@ -368,29 +373,42 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
             measurement.addMetric(new MetricValue(KpiList.HAS_GPU, KpiList.HAS_GPU, hasGraphicsCard + "", clock));
             measurement.addMetric(new MetricValue(KpiList.HAS_MIC, KpiList.HAS_MIC, hasMic + "", clock));
             measurement.addMetric(new MetricValue(KpiList.HAS_ACCELERATOR, KpiList.HAS_ACCELERATOR, hasAccelerator + "", clock));
+        if (hasAccelerator == false) {
+            return measurement;
+        }
             String[] gresStringSplit = gresString.split(",");
             for (String dataItem : gresStringSplit) {
                 boolean gpu = dataItem.contains("gpu");
                 boolean mic = dataItem.contains("mic");
                 String[] dataItemSplit = dataItem.split(":");
-                String gpuName = dataItemSplit[1];
-                int gpuCount = 1;
-                if (dataItemSplit.length > 2) {
+            String acceleratorName;
+            int acceleratorCount = 1;
+            if (dataItemSplit.length == 3) {
+                acceleratorName = dataItemSplit[1]; //strings such as gpu:teslak20:2
+                try {
+                    acceleratorCount = Integer.parseInt(dataItemSplit[2].trim());
+                } catch (NumberFormatException ex) {
+                    Logger.getLogger(SlurmDataSourceAdaptor.class.getName()).log(Level.SEVERE,
+                            "Unexpected number format", ex);
+                }
+            } else {
+                acceleratorName = dataItemSplit[0]; //strings such as mic:2
                     try {
-                        gpuCount = Integer.parseInt(dataItemSplit[2].trim());
+                    acceleratorCount = Integer.parseInt(dataItemSplit[1].trim());
                     } catch (NumberFormatException ex) {
                     Logger.getLogger(SlurmDataSourceAdaptor.class.getName()).log(Level.SEVERE,
                             "Unexpected number format", ex);
                     }
                 }
                 if (gpu) {
-                    measurement.addMetric(new MetricValue(KpiList.GPU_NAME, KpiList.GPU_NAME, gpuName, clock));
-                    measurement.addMetric(new MetricValue(KpiList.GPU_COUNT, KpiList.GPU_COUNT, gpuCount + "", clock));
+                measurement.getHost().addAccelerator(new Accelerator(acceleratorName, acceleratorCount, Accelerator.AcceleratorType.GPU));
+                measurement.addMetric(new MetricValue(KpiList.GPU_NAME, KpiList.GPU_NAME, acceleratorName, clock));
+                measurement.addMetric(new MetricValue(KpiList.GPU_COUNT, KpiList.GPU_COUNT, acceleratorCount + "", clock));
                 } else if (mic) {
-                    measurement.addMetric(new MetricValue(KpiList.MIC_NAME, KpiList.MIC_NAME, gpuName, clock));
-                    measurement.addMetric(new MetricValue(KpiList.MIC_COUNT, KpiList.MIC_COUNT, gpuCount + "", clock));
+                measurement.getHost().addAccelerator(new Accelerator(acceleratorName, acceleratorCount, Accelerator.AcceleratorType.MIC));
+                measurement.addMetric(new MetricValue(KpiList.MIC_NAME, KpiList.MIC_NAME, acceleratorName, clock));
+                measurement.addMetric(new MetricValue(KpiList.MIC_COUNT, KpiList.MIC_COUNT, acceleratorCount + "", clock));
                 }
-
             }
             return measurement;
         }
@@ -407,20 +425,22 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
          */        
         private HostMeasurement readGresUsedString(String[] values, HostMeasurement measurement, long clock) {        
             String gresString = getValue("GresUsed", values);
-        System.out.println("GRES STR: " + gresString);
+        if (gresString.isEmpty()) {
+            return measurement;
+        }
             String[] gresStringSplit = gresString.split(",");
             for (String dataItem : gresStringSplit) {
-            System.out.println("Data Item: " + dataItem);
                 boolean gpu = dataItem.contains("gpu");
                 boolean mic = dataItem.contains("mic");
                 String[] dataItemSplit = dataItem.split(":");
                 String gpuUsed = "";
                 for (String item : dataItemSplit) {
-                System.out.println("Item: " + item);
                     if(!item.isEmpty() && Character.isDigit(item.charAt(0))) {
-                        int used = new Scanner(item).useDelimiter("[^\\d]+").nextInt();
+                    try (Scanner scanner = new Scanner(item).useDelimiter("[^\\d]+")) {
+                        int used = scanner.nextInt();
                         gpuUsed = used + "";
-                        break; //finds the first number indicating the usage of either the gpu or mic
+                    }
+                    break;
                     }
                 }
                 if (gpu) {
@@ -464,14 +484,19 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
                              * [CfgTRES:cpu, 32] i.e. index 0:1 , 2
                              * [CfgTRES:mem, 64408M] i.e. index 0:3 , 5
                              */
+                        try {
                             for (int i = 1; i <= params; i++) {
                                 String name = valueSplit[0].trim() + ":" + valueSplit[i * 2 - 1].trim();
                                 measurement.addMetric(new MetricValue(name, name, valueSplit[i * 2].trim(), clock));
                             }
+                        } catch (Exception ex) {
+                            System.out.println("Parsing had an issue with : " + value);
+                        }
                             break;
                     }
                 } catch (Exception ex) {
-                    ex.printStackTrace();
+                Logger.getLogger(SlurmDataSourceAdaptor.class.getName()).log(Level.SEVERE,
+                        "An error occured while parsing from SLURM", ex);
                 }
             }
             return measurement;
@@ -496,7 +521,7 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
                 cpuMeasure.add(new SlurmDataSourceAdaptor.CPUUtilisation(clock, hostname, (Double.valueOf(getValue("CPULoad", values))) * 100));
                 Host host = getHostByName(hostname);
 
-                //Check for need to disover host
+            //Check for need to discover host
                 if (host == null) {
                     host = new Host(Integer.parseInt(hostId), hostname);
                     hosts.put(hostname, host);

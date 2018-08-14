@@ -62,6 +62,7 @@ public abstract class KpiList {
     public static final String VM_PHYSICAL_HOST_NAME = "physical_host";
     public static final String VM_PHYSICAL_HOST_NAME_2 = "physical.host";
     //accelerators
+    public static final String ACCELERATOR_POWER_USED = "accelerator_power";    
     public static final String HAS_ACCELERATOR = "has_accelerator";
     public static final String HAS_GPU = "has_gpu";
     public static final String GPU_NAME = "gpu_name";
