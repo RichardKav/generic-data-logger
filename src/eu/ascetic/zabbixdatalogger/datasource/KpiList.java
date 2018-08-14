@@ -18,7 +18,7 @@ package eu.ascetic.zabbixdatalogger.datasource;
 /**
  * This lists all known KPI constants, it should therefore not be instantiated.
  *
- * @author Richard
+ * @author Richard Kavanagh
  */
 public abstract class KpiList {
 

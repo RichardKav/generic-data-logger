@@ -247,16 +247,12 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
      */
     private static ArrayList<String> execCmd(String[] cmd) throws java.io.IOException {
         ArrayList<String> output = new ArrayList<>();
-//        for( int i = 0; i < cmd.length;i++) {
-//            System.out.println(cmd[i]);
-//        }
         Process proc = Runtime.getRuntime().exec(cmd);
-        java.io.InputStream is = proc.getInputStream(); // \\A| \\A|
-        java.util.Scanner s = new java.util.Scanner(is); //.useDelimiter("\r\n|\n|\r");
+        java.io.InputStream is = proc.getInputStream();
+        java.util.Scanner s = new java.util.Scanner(is);
         String outputLine;
         while (s.hasNextLine()) {
             outputLine = s.nextLine();
-//            System.out.println("OUT: " + outputLine);
             output.add(outputLine);
         }
         return output;
@@ -314,7 +310,6 @@ public class SlurmDataSourceAdaptor implements DataSourceAdaptor {
                 String cmd = "scontrol show node=" + hostString + " -o -d | sed \"s/ /;/g\"";
                 System.out.println("Command: " + cmd);
                 ArrayList<String> lines = execCmd(cmd);
-                System.out.println("output: " + lines.size());
                 for (String line : lines) {
                     System.out.println(line);
                     parse(line);
