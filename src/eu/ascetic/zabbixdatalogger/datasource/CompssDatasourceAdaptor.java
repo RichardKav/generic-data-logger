@@ -26,8 +26,8 @@ import eu.ascetic.zabbixdatalogger.datasource.compsstype.CompssResource;
 import static eu.ascetic.zabbixdatalogger.datasource.compsstype.JsonUtils.readJsonFromXMLFile;
 import eu.ascetic.zabbixdatalogger.datasource.types.Accelerator;
 import eu.ascetic.zabbixdatalogger.datasource.types.ApplicationOnHost;
-import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
+import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
 import java.io.File;
 import java.io.FileFilter;
@@ -261,7 +261,7 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
 
     @Override
     public VmDeployed getVmByName(String name) {
-        throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
+        return null;
     }
 
     /**
