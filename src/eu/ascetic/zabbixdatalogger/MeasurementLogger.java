@@ -98,7 +98,11 @@ public class MeasurementLogger extends GenericLogger<Measurement> {
         }
         store.add(item.getClock());
         for (String name : metricNames) {
-            store.append(item.getMetric(name).getValueAsString());
+            if (item.metricExists(name)) {
+                store.append(item.getMetric(name).getValueAsString());
+            } else {
+                store.append("");
+            }
         }
     }
 }
