@@ -330,6 +330,7 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
         return new ArrayList<>();
     }
 
+    @Override
     public List<ApplicationOnHost> getHostApplicationList(ApplicationOnHost.JOB_STATUS state) {
         ArrayList<ApplicationOnHost> answer = new ArrayList<>();
         List<ApplicationOnHost> allApps = getHostApplicationList();
@@ -341,6 +342,7 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
         return answer;
     }
 
+    @Override
     /**
      * This lists the tasks that are currently running in the compss environment
      * @return The list of currently running tasks
@@ -437,6 +439,16 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
      * @return The amount of tasks that are in progress.
      */
     private int getRunningTaskCount(JSONObject compssState) {
+        try {
+            /**
+             * Guard against empty strings, when a json object is expected
+             * This happens when there are no tasks running
+             */
+            if (compssState.get(TASK_INFO) instanceof String && 
+                    compssState.getString(TASK_INFO).isEmpty()) {
+                    return 0;
+            }
+            if (compssState.get(TASK_INFO) instanceof JSONObject) {
         JSONObject taskInfo = compssState.getJSONObject(TASK_INFO);
         if (taskInfo != null && taskInfo.has("Application")) {
             JSONObject application = taskInfo.getJSONObject("Application");
@@ -444,6 +456,15 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
                 //Other options are "TotalCount" or "Completed"
                 return application.getInt("InProgress");
             }
+        }
+            } else {
+                Logger.getLogger(CompssDatasourceAdaptor.class.getName()).log(Level.SEVERE, 
+                        "parse error " + TASK_INFO + " was not of the expected type. "
+                                + "It was of type {0}", compssState.get(TASK_INFO).getClass());
+            }
+        } catch (JSONException ex) {
+            Logger.getLogger(CompssDatasourceAdaptor.class.getName()).log(Level.SEVERE, 
+                    "parse error", ex);
         }
         return 0;
     }
@@ -538,6 +559,7 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
         return appData;
     }    
 
+    @Override
     public ApplicationMeasurement getApplicationData(ApplicationOnHost application) {
         if (application == null) {
             return null;
@@ -551,10 +573,12 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
         return appData;
     }
 
+    @Override
     public List<ApplicationMeasurement> getApplicationData() {
         return getApplicationData(getHostApplicationList());
     }
 
+    @Override
     public List<ApplicationMeasurement> getApplicationData(List<ApplicationOnHost> appList) {
         if (appList == null) {
             appList = getHostApplicationList();
