@@ -19,8 +19,8 @@
 package eu.ascetic.zabbixdatalogger.datasource;
 
 import eu.ascetic.zabbixdatalogger.datasource.types.ApplicationOnHost;
-import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
+import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
 import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -114,10 +114,10 @@ public class TangoRemoteProcessingDataSourceAdaptor implements DataSourceAdaptor
             return null;
         }
         HostMeasurement answer = compss.getHostData(host);
-        //Adds various information such as memory usage, including static upper bound values.
+        //Adds various information such as how many applications are running.
         Host collectDhost = convertNames(host);
         if (collectDhost != null) {
-            if (answer == null) {
+            if (answer == null) { //No compss related data therefore overwrite
                 answer = collectD.getHostData(collectDhost);
                 answer.setHost(host); //This ensures a collectD host is not leaked
             } else {
@@ -130,7 +130,6 @@ public class TangoRemoteProcessingDataSourceAdaptor implements DataSourceAdaptor
                     answer.addMetric(data.getMetric(KpiList.CPU_SPOT_USAGE_KPI_NAME));
                 }
                 answer.addMetrics(data);
-                
             }
         }
         return answer;
