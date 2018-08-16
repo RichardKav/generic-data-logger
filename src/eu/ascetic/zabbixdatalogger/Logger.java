@@ -15,21 +15,26 @@
  */
 package eu.ascetic.zabbixdatalogger;
 
+import eu.ascetic.zabbixdatalogger.datasource.ApplicationDataSource;
+import eu.ascetic.zabbixdatalogger.datasource.ApplicationMeasurement;
 import eu.ascetic.zabbixdatalogger.datasource.CollectDInfluxDbDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.CollectdDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.CompssDatasourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.DataSourceAdaptor;
+import eu.ascetic.zabbixdatalogger.datasource.HostMeasurement;
 import eu.ascetic.zabbixdatalogger.datasource.SlurmDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.TangoEnvironmentDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.TangoRemoteProcessingDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.ZabbixDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.ZabbixDirectDbDataSourceAdaptor;
+import eu.ascetic.zabbixdatalogger.datasource.types.ApplicationOnHost;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
 import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Scanner;
 import java.util.logging.Level;
 
@@ -110,8 +115,9 @@ public class Logger {
             vm = adaptor.getVmByName(hostname);
         }
         while (running) {
-            if (host != null && adaptor.getHostData(host) != null) {
-                logger.printToFile(adaptor.getHostData(host));
+            HostMeasurement measurement = adaptor.getHostData(host);
+            if (host != null && measurement != null) {               
+                logger.printToFile(measurement);
             } else if (vm != null) {
                 logger.printToFile(adaptor.getVmData(vm));
             } else {
