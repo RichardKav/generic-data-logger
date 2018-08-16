@@ -35,7 +35,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.GregorianCalendar;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.json.JSONException;
@@ -471,17 +473,31 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
     
     @Override
     public HostMeasurement getHostData(Host host) {
-        return new HostMeasurement(host);
+        long clock = TimeUnit.MILLISECONDS.toSeconds(new GregorianCalendar().getTimeInMillis());
+        HostMeasurement answer = new HostMeasurement(host, clock);
+        List<ApplicationOnHost> appsOnThisHost = ApplicationOnHost.filter(getHostApplicationList(), answer.getHost());
+        List<ApplicationOnHost> appsRunningOnThisHost = getHostApplicationList(appsOnThisHost, ApplicationOnHost.JOB_STATUS.RUNNING);
+        answer.addMetric(new MetricValue(APPS_ALLOCATED_TO_HOST_COUNT, APPS_ALLOCATED_TO_HOST_COUNT, appsOnThisHost.size() + "", answer.getClock()));
+        answer.addMetric(new MetricValue(APPS_RUNNING_ON_HOST_COUNT, APPS_RUNNING_ON_HOST_COUNT, appsRunningOnThisHost.size() + "", answer.getClock()));
+        return answer; 
     }
 
     @Override
     public List<HostMeasurement> getHostData() {
-        return new ArrayList<>();
+        List<HostMeasurement> answer = new ArrayList<>();
+        for (Host host : getHostList()) {
+            answer.add(getHostData(host));
+        }
+        return answer;
     }
 
     @Override
     public List<HostMeasurement> getHostData(List<Host> hostList) {
-        return new ArrayList<>();
+        List<HostMeasurement> answer = new ArrayList<>();
+        for (Host host : hostList) {
+            answer.add(getHostData(host));
+        }
+        return answer;
     }
 
     @Override
