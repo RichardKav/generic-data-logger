@@ -281,7 +281,7 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor, App
                         }
                     } catch (NumberFormatException ex) {
                         Logger.getLogger(CollectDInfluxDbDataSourceAdaptor.class.getName()).log(Level.WARNING, "Parsing input from collectd failed", ex);
-                 }
+                    }
                     MetricValue metric = new MetricValue(metricName, metricName, value.get(1).toString(), time.getEpochSecond());
                     answer.addMetric(metric);
                     if (time.getEpochSecond() > answer.getClock()) {
@@ -294,7 +294,7 @@ public class CollectDInfluxDbDataSourceAdaptor implements DataSourceAdaptor, App
             MetricValue metric = new MetricValue(KpiList.ACCELERATOR_POWER_USED, KpiList.ACCELERATOR_POWER_USED, Double.toString(acceleratorPowerUsed), answer.getClock());
             answer.addMetric(metric);
         }
-         return answer;
+        return answer;
     }
 
     /**
