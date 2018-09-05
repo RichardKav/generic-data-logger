@@ -18,6 +18,8 @@
  */
 package eu.ascetic.zabbixdatalogger.datasource;
 
+import eu.ascetic.zabbixdatalogger.datasource.compsstype.CompssImplementation;
+import eu.ascetic.zabbixdatalogger.datasource.compsstype.CompssResource;
 import eu.ascetic.zabbixdatalogger.datasource.types.ApplicationOnHost;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
 import eu.ascetic.zabbixdatalogger.datasource.types.MonitoredEntity;
@@ -54,6 +56,23 @@ public class TangoRemoteProcessingDataSourceAdaptor implements DataSourceAdaptor
     public TangoRemoteProcessingDataSourceAdaptor() {
         super();
     }
+    
+    /**
+     * This gets the compss resources list, indicating which hosts have which
+     * worker instances available.
+     * @return
+     */
+    public List<CompssResource> getCompssResources() {
+        return compss.getCompssResources();
+    }
+    
+    /**
+     * This lists the various different versions of workers that are available.
+     * @return 
+     */
+    public List<CompssImplementation> getCompssImplementation() {
+        return compss.getCompssImplementation();
+    } 
 
     @Override
     public Host getHostByName(String hostname) {
@@ -122,6 +141,9 @@ public class TangoRemoteProcessingDataSourceAdaptor implements DataSourceAdaptor
                 answer.setHost(host); //This ensures a collectD host is not leaked
             } else {
                 HostMeasurement data = collectD.getHostData(collectDhost);
+                if (data == null) {
+                    return answer;
+                }
                 if (data.metricExists(KpiList.CPU_IDLE_KPI_NAME)) {
                     //Ensure that collectd based measures of utilisation take precedence
                     answer.deleteMetric(KpiList.CPU_IDLE_KPI_NAME);

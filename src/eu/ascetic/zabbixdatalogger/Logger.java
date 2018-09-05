@@ -15,8 +15,6 @@
  */
 package eu.ascetic.zabbixdatalogger;
 
-import eu.ascetic.zabbixdatalogger.datasource.ApplicationDataSource;
-import eu.ascetic.zabbixdatalogger.datasource.ApplicationMeasurement;
 import eu.ascetic.zabbixdatalogger.datasource.CollectDInfluxDbDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.CollectdDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.CompssDatasourceAdaptor;
@@ -27,14 +25,13 @@ import eu.ascetic.zabbixdatalogger.datasource.TangoEnvironmentDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.TangoRemoteProcessingDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.ZabbixDataSourceAdaptor;
 import eu.ascetic.zabbixdatalogger.datasource.ZabbixDirectDbDataSourceAdaptor;
-import eu.ascetic.zabbixdatalogger.datasource.types.ApplicationOnHost;
+import eu.ascetic.zabbixdatalogger.datasource.compsstype.CompssImplementation;
 import eu.ascetic.zabbixdatalogger.datasource.types.Host;
 import eu.ascetic.zabbixdatalogger.datasource.types.VmDeployed;
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Scanner;
 import java.util.logging.Level;
 
@@ -57,6 +54,7 @@ public class Logger {
         HashSet<String> strArgs = new HashSet<>();
         strArgs.addAll(Arrays.asList(args));
         MeasurementLogger logger = new MeasurementLogger(new File("Dataset_" + hostname + ".txt"), false);
+        TaskLogger tasklogger = null;
         new Thread(logger).start();
         if (!(strArgs.contains("silent") || strArgs.contains("s"))) {
             System.out.println("This application will run continually until the word "
@@ -74,7 +72,7 @@ public class Logger {
         } else if (strArgs.contains("influx")  || strArgs.contains("i")) {
             adaptor = new CollectDInfluxDbDataSourceAdaptor();
         } else if ((strArgs.contains("compss") || strArgs.contains("c"))) {
-            adaptor = new CompssDatasourceAdaptor();              
+            adaptor = new CompssDatasourceAdaptor();
         } else if ((strArgs.contains("collectd") || strArgs.contains("d"))) {
             adaptor = new CollectdDataSourceAdaptor();          
             try {
@@ -101,6 +99,9 @@ public class Logger {
             }
         } else if ((strArgs.contains("remote") || strArgs.contains("r"))) {
             adaptor = new TangoRemoteProcessingDataSourceAdaptor();
+            //Adding hostname avoids conflicts if multiple instances run at once
+            tasklogger = new TaskLogger(new File("Dataset_compss_"+ hostname + ".txt"), false);
+            new Thread(tasklogger).start();            
             try {
                 Thread.sleep(2000);
             } catch (InterruptedException ex) {
@@ -116,6 +117,11 @@ public class Logger {
         }
         while (running) {
             HostMeasurement measurement = adaptor.getHostData(host);
+            if (adaptor instanceof TangoRemoteProcessingDataSourceAdaptor && tasklogger != null) {
+                for (CompssImplementation impl : ((TangoRemoteProcessingDataSourceAdaptor)adaptor).getCompssImplementation()) {
+                    tasklogger.printToFile(impl);
+                }
+            }
             if (host != null && measurement != null) {               
                 logger.printToFile(measurement);
             } else if (vm != null) {

@@ -591,13 +591,13 @@ public class CompssDatasourceAdaptor implements DataSourceAdaptor, ApplicationDa
 
     @Override
     public List<ApplicationMeasurement> getApplicationData() {
-        return getApplicationData(getHostApplicationList());
+        return getApplicationData(getHostApplicationList(ApplicationOnHost.JOB_STATUS.RUNNING));
     }
 
     @Override
     public List<ApplicationMeasurement> getApplicationData(List<ApplicationOnHost> appList) {
         if (appList == null) {
-            appList = getHostApplicationList();
+            appList = getHostApplicationList(ApplicationOnHost.JOB_STATUS.RUNNING);
         }
         ArrayList<ApplicationMeasurement> answer = new ArrayList<>();
         for (ApplicationOnHost app : appList) {
