@@ -53,7 +53,7 @@ public class CompssImplementation extends JsonObjectWrapper {
             JSONObject implementations = items.getJSONObject("implementations");
             for (Iterator iterator = implementations.keys(); iterator.hasNext();) {
                 Object key = iterator.next();
-                if (key instanceof String && implementations.getJSONObject((String) key) instanceof JSONObject) {
+                if (key instanceof String && implementations.get((String) key) instanceof JSONObject) {
                     JSONObject implementation = implementations.getJSONObject((String) key);
                     answer.add(new CompssImplementation((String) key, implementation));
                 }
@@ -88,7 +88,7 @@ public class CompssImplementation extends JsonObjectWrapper {
         if (core.get("Impl") instanceof JSONArray) {
             JSONArray implementations = core.getJSONArray("Impl");
             for (int i = 0; i < core.length();i++) {
-                if (implementations.getJSONObject(i) instanceof JSONObject) {
+                if (implementations.get(i) instanceof JSONObject) {
                     JSONObject implementation = implementations.getJSONObject(i);
                     answer.add(new CompssImplementation(implementation.getString("Signature"), implementation));
                 }
