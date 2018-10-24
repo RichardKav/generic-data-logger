@@ -61,21 +61,42 @@ public class CompssImplementation extends JsonObjectWrapper {
             return answer;
         }
         if (items.has("Core")) {
-            JSONObject core = items.getJSONObject("Core");
-            if (core.get("Impl") instanceof JSONArray) {
-                JSONArray implementations = core.getJSONArray("Impl");
-                for (int i = 0; i < core.length();i++) {
-                    if (implementations.getJSONObject(i) instanceof JSONObject) {
-                        JSONObject implementation = implementations.getJSONObject(i);
-                        answer.add(new CompssImplementation(implementation.getString("Signature"), implementation));
-                    }
+            JSONObject core;
+            if (items.get("Core") instanceof JSONObject) {
+                core = items.getJSONObject("Core");
+                answer = parseCompsImplementationFromCoreObject(core, answer);
+            } else if (items.get("Core") instanceof JSONArray) {
+                JSONArray coreArray = items.getJSONArray("Core");
+                for (int i = 0; i < coreArray.length(); i++) {
+                    core = coreArray.getJSONObject(i);
+                    answer = parseCompsImplementationFromCoreObject(core, answer);
                 }
+            }
+            return answer;
+        }        
+        return answer;
+    }
+    
+    /**
+     * This parses a core object from the json.
+     * @param core The core object to parse
+     * @param answer The initial answer that will have additional items added to it
+     * as the parsing proceeds. i.e. this method may be used to part process a list of core objects.
+     * @return The list that has been appended to.
+     */
+    private static ArrayList<CompssImplementation> parseCompsImplementationFromCoreObject(JSONObject core, ArrayList<CompssImplementation> answer) {
+        if (core.get("Impl") instanceof JSONArray) {
+            JSONArray implementations = core.getJSONArray("Impl");
+            for (int i = 0; i < core.length();i++) {
+                if (implementations.getJSONObject(i) instanceof JSONObject) {
+                    JSONObject implementation = implementations.getJSONObject(i);
+                    answer.add(new CompssImplementation(implementation.getString("Signature"), implementation));
+                }
+            }
             } else if (core.get("Impl") instanceof JSONObject) {
                 JSONObject implementation = core.getJSONObject("Impl");
                 answer.add(new CompssImplementation(implementation.getString("Signature"), implementation));                
             }
-            return answer;
-        }        
         return answer;
     }
     
